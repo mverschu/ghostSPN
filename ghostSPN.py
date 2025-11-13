@@ -131,6 +131,13 @@ def is_microsoft_guid_path(spn: str, hostname: str) -> bool:
     if is_guid_like(hostname):
         return True
     
+    # Detect GUID-based hostnames used for Microsoft DNS (e.g., GUID._msdcs.domain)
+    hostname_lower = hostname.lower()
+    if '._msdcs.' in hostname_lower:
+        first_label = hostname_lower.split('.')[0]
+        if is_guid_like(first_label):
+            return True
+    
     # Secondary check: detect GUID path structure in the SPN
     # Microsoft GUID paths typically have: GUID-SERVICE-NAME/GUID-PATH-SEGMENT/...
     parts = spn.split('/')
