@@ -2,6 +2,8 @@
 
 `ghostSPN` is a Python utility for identifying "ghost" Service Principal Names (SPNs) in Active Directory. It helps defenders uncover stale or orphaned SPNs that attackers can abuse for Kerberos-based privilege escalation.
 
+<img width="1642" height="809" alt="image" src="https://github.com/user-attachments/assets/c30e6b1f-2ce2-4ad9-85d7-956f7598494b" />
+
 ## Features
 - Enumerates SPNs via LDAP with paging and filtering optimizations.
 - Flags high-risk services (HTTP, MSSQL, TERMSRV, and more).
