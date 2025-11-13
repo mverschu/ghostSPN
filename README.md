@@ -11,24 +11,7 @@
 ## Installation
 - **pipx (recommended)**
   ```
-  pipx install .
-  ghostspn --help
-  ```
-  You can also install directly from Git once the repo is published:
-  ```
   pipx install git+https://github.com/mverschu/ghostSPN.git
-  ```
-
-- **pip / virtual environment**
-  ```
-  python3 -m venv .venv
-  source .venv/bin/activate
-  pip install .
-  ```
-  For ad-hoc usage without installing the package:
-  ```
-  pip install -r requirements.txt
-  python3 ghostSPN.py --help
   ```
 
 ## Usage
