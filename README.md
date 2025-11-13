@@ -25,12 +25,6 @@ For LDAPS environments enforcing channel binding, use a UPN-style username toget
 python3 ghostSPN.py --server dc01.corp.local --use-ssl --username admin@corp.local --password Pass123 --no-verify
 ```
 
-Useful options:
-- `--use-ssl` and `--no-verify` to control LDAPS.
-- `--quick-mode` to enable all speed optimizations.
-- `--check-dns` to resolve hostnames and cache known results.
-- `--output results.csv` to export findings.
-
 Run `ghostspn --help` (or `python3 ghostSPN.py --help`) for the complete list of arguments.
 
 ## Output
