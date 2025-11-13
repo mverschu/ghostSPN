@@ -97,6 +97,77 @@ EXCLUDE_PATTERNS = [
     r'^\w+\.microsoft\.com$',
 ]
 
+# GUID pattern: 8-4-4-4-12 hexadecimal characters with dashes
+# Also matches variants without dashes (32 hex chars) or with different separators
+GUID_RE = re.compile(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+    re.IGNORECASE
+)
+# Matches 32 hexadecimal characters (GUID without dashes)
+GUID_NO_DASHES_RE = re.compile(r'^[0-9a-f]{32}$', re.IGNORECASE)
+
+
+def is_guid_like(s: str) -> bool:
+    """Check if a string looks like a GUID/UUID."""
+    if not s or len(s) < 32:
+        return False
+    # Check standard GUID format (with dashes)
+    if GUID_RE.match(s):
+        return True
+    # Check GUID without dashes
+    if GUID_NO_DASHES_RE.match(s):
+        return True
+    return False
+
+
+def is_microsoft_guid_path(spn: str, hostname: str) -> bool:
+    """
+    Detect Microsoft internal GUID paths like:
+    E3514235-4B06-11D1-AB04-00C04FC2DCD2/0cc5fcab-58a4-4a38-9a25-b51bf21c4bb4/example.com
+    
+    These are AD forest/domain identifiers, not exploitable DNS entries.
+    """
+    # Primary check: if the extracted hostname itself is a GUID, it's definitely a GUID path
+    if is_guid_like(hostname):
+        return True
+    
+    # Secondary check: detect GUID path structure in the SPN
+    # Microsoft GUID paths typically have: GUID-SERVICE-NAME/GUID-PATH-SEGMENT/...
+    parts = spn.split('/')
+    if len(parts) < 2:
+        return False
+    
+    # Check if the service name (first part) is a GUID
+    # This indicates a Microsoft GUID-based SPN structure
+    service_name = parts[0].split(':')[0]  # Remove port if present
+    if is_guid_like(service_name):
+        # If service name is a GUID and we have multiple path segments,
+        # and the extracted hostname (which comes from parts[1]) is also a GUID,
+        # this is a Microsoft GUID path
+        if len(parts) > 2:
+            hostname_part = parts[1].split(':')[0]  # Remove port if present
+            if is_guid_like(hostname_part):
+                return True
+    
+    # Additional check: if the hostname doesn't look like a valid domain/hostname
+    # (no dots, not alphanumeric with hyphens) and the SPN path contains GUID segments,
+    # it's likely part of a GUID path structure
+    # Only apply this if hostname looks suspicious (no dots, just hex-like chars)
+    if '.' not in hostname:
+        guid_in_path = False
+        for part in parts[1:]:  # Check all path segments after service name
+            part_without_port = part.split(':')[0]
+            if is_guid_like(part_without_port):
+                guid_in_path = True
+                break
+        # If we found GUID segments and hostname has no dots (not a real domain),
+        # and hostname itself could be part of the GUID path
+        if guid_in_path and len(hostname) >= 32:
+            # Hostname is long enough to be a GUID and path contains GUIDs
+            return True
+    
+    return False
+
 
 def parse_args():
     p = argparse.ArgumentParser(
@@ -413,6 +484,10 @@ def enumerate_spns(conn: Connection, base_dn: str, page_size: int,
             m = SPN_HOST_RE.match(spn)
             if m:
                 host = m.group(1).lower()
+                
+                # Filter out Microsoft GUID paths (AD forest/domain identifiers)
+                if is_microsoft_guid_path(spn, host):
+                    continue
                 
                 if should_exclude_host(host):
                     continue
