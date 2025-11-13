@@ -68,6 +68,15 @@ except ImportError:
         def close(self):
             print()
 
+try:
+    import dns.resolver  # type: ignore
+    HAS_DNSPYTHON = True
+except ImportError:
+    dns = None  # type: ignore
+    HAS_DNSPYTHON = False
+
+DNSPYTHON_WARNING_EMITTED = False
+
 SPN_HOST_RE = re.compile(r'^[^/]+/([^/:]+)', re.IGNORECASE)
 
 HIGH_RISK_SPNS = [
@@ -205,6 +214,8 @@ def parse_args():
 
     analysis = p.add_argument_group("Analysis & Output")
     analysis.add_argument('--check-dns', action='store_true', help='Enable DNS resolution checks')
+    analysis.add_argument('--nameserver', '--ns', dest='nameserver',
+                          help='DNS server for --check-dns (default: domain controller IP)')
     analysis.add_argument('--threads', type=int, default=50, help='Parallel DNS lookup threads')
     analysis.add_argument('--timeout', type=float, default=2.0, help='DNS lookup timeout')
     analysis.add_argument('--cache-file', help='Cache file for known-good hosts')
@@ -257,6 +268,22 @@ def format_duration(seconds: float) -> str:
         return f"{int(minutes)}m {int(secs)}s"
     hours, minutes = divmod(minutes, 60)
     return f"{int(hours)}h {int(minutes)}m"
+
+
+def normalize_nameserver(value: str | None) -> str | None:
+    if not value:
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    try:
+        ipaddress.ip_address(candidate)
+        return candidate
+    except ValueError:
+        try:
+            return socket.gethostbyname(candidate)
+        except (socket.gaierror, OSError):
+            return None
 
 
 def should_exclude_host(hostname: str, domain: str | None = None) -> bool:
@@ -315,7 +342,21 @@ def save_host_cache(cache_file: str, dns_results: Dict[str, bool]):
         print(f"[!] Error saving cache: {e}")
 
 
-def hostname_resolves(host: str, timeout: float) -> bool:
+def hostname_resolves(host: str, timeout: float, nameserver: str | None = None) -> bool:
+    global DNSPYTHON_WARNING_EMITTED
+    if nameserver and HAS_DNSPYTHON:
+        resolver = dns.resolver.Resolver(configure=True)  # type: ignore[attr-defined]
+        resolver.nameservers = [nameserver]
+        resolver.lifetime = timeout
+        resolver.timeout = timeout
+        try:
+            answers = resolver.resolve(host)
+            return bool(answers)
+        except Exception:
+            return False
+    if nameserver and not HAS_DNSPYTHON and not DNSPYTHON_WARNING_EMITTED:
+        print("[!] dnspython not available; falling back to system resolver (nameserver override ignored)")
+        DNSPYTHON_WARNING_EMITTED = True
     try:
         old = socket.getdefaulttimeout()
         socket.setdefaulttimeout(timeout)
@@ -674,13 +715,21 @@ def assess_exploitability(entry: Dict, ad_computer_matches: Dict[str, List[Dict]
             return 'SELF', 'Computer points to itself (same computer, different alias)'
     
     target_in_ad = bool(ad_computer_matches.get(hostname))
-    target_resolves = dns_results.get(hostname, False) if check_dns_enabled else None
+    target_resolves = dns_results.get(hostname) if check_dns_enabled else None
     
-    if target_in_ad or target_resolves:
-        return 'MEDIUM', 'Target exists in AD or resolves in DNS'
+    if target_in_ad:
+        if check_dns_enabled and target_resolves:
+            return 'MEDIUM', 'Target exists in AD and resolves in DNS'
+        return 'MEDIUM', 'Target exists in AD'
+    
+    if check_dns_enabled:
+        if target_resolves:
+            return 'MEDIUM', 'Target resolves in DNS'
     
     account_display = account_sam.rstrip('$') if account_sam else 'UNKNOWN'
     reason = f'{account_display}$ -> {hostname}'
+    if check_dns_enabled and target_resolves is False:
+        reason = f'{reason} (DNS unresolved)'
     return 'HIGH', reason
 
 
@@ -746,6 +795,21 @@ def main():
     
     dns_results = {}
     cached_hosts = {}
+    dns_nameserver = None
+    
+    if args.check_dns:
+        candidate_ns = args.nameserver or args.server
+        dns_nameserver = normalize_nameserver(candidate_ns)
+        if dns_nameserver:
+            if args.nameserver:
+                print(f"[+] Using custom DNS server for resolution: {dns_nameserver}")
+            else:
+                print(f"[+] Using domain controller DNS server: {dns_nameserver}")
+        else:
+            if args.nameserver:
+                print(f"[!] Unable to use provided nameserver '{args.nameserver}'. Falling back to system resolver.")
+            else:
+                print(f"[!] Unable to determine domain controller IP for DNS lookups. Falling back to system resolver.")
     
     if args.check_dns:
         if args.cache_file:
@@ -758,7 +822,10 @@ def main():
             print(f"[+] Performing DNS checks on {len(hosts_to_check)} hosts ({len(cached_hosts)} cached)...")
             
             with ThreadPoolExecutor(max_workers=args.threads) as pool:
-                futures = {pool.submit(hostname_resolves, h, args.timeout): h for h in hosts_to_check}
+                futures = {
+                    pool.submit(hostname_resolves, h, args.timeout, dns_nameserver): h
+                    for h in hosts_to_check
+                }
                 
                 for fut in as_completed(futures):
                     host = futures[fut]
@@ -778,6 +845,7 @@ def main():
         hosts_to_check = unresolved
     else:
         hosts_to_check = unique_hosts[:]
+        print("[!] DNS validation not performed (--check-dns not supplied); exploitability ratings may include resolvable hosts.")
     
     hosts_to_check_count = len(hosts_to_check)
     ad_computer_matches = {h: [] for h in hosts_to_check}
@@ -821,10 +889,23 @@ def main():
             continue
         
         exploitability = assess_exploitability(entry, ad_computer_matches, dns_results, args.check_dns)
+        if args.check_dns:
+            dns_value = dns_results.get(host)
+            if dns_value is True:
+                dns_status = 'Resolved'
+            elif dns_value is False:
+                dns_status = 'Not Resolved'
+            else:
+                dns_status = 'Unknown'
+        else:
+            dns_value = None
+            dns_status = 'Not Checked'
         
         ghost_candidates.append({
             'spn': entry['spn'],
             'hostname': host,
+            'dns_status': dns_status,
+            'dns_resolved': dns_value,
             'account_sam': entry.get('account_sam') or '',
             'account_dn': entry.get('account_dn') or '',
             'is_computer_account': entry.get('is_computer', False),
@@ -872,11 +953,18 @@ def main():
             colored_label = colorize(label, severity)
             print(f"{colored_label} ({len(subset)}{title_suffix})\n")
             sorted_subset = sorted(subset, key=sort_key, reverse=True)
-            table = [
-                [g['spn'], g['account_sam'], g['hostname'], g['last_logon'], g['reason']]
-                for g in sorted_subset
-            ]
-            print(tabulate(table, headers=["SPN", "Account", "Hostname", "Last Logon", "Reason"], tablefmt="fancy_grid"))
+            table = []
+            for g in sorted_subset:
+                row = [g['spn'], g['account_sam'], g['hostname']]
+                if args.check_dns:
+                    row.append(g.get('dns_status', 'Unknown'))
+                row.extend([g['last_logon'], g['reason']])
+                table.append(row)
+            headers = ["SPN", "Account", "Hostname"]
+            if args.check_dns:
+                headers.append("DNS")
+            headers.extend(["Last Logon", "Reason"])
+            print(tabulate(table, headers=headers, tablefmt="fancy_grid"))
             print()
     else:
         print("[+] No ghost SPNs detected!")
