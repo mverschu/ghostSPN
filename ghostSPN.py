@@ -200,6 +200,8 @@ def parse_args():
     retrieval.add_argument('--high-risk-only', action='store_true', help='Only scan high-risk SPN types')
     retrieval.add_argument('--user-accounts-only', action='store_true', help='Only check user accounts')
     retrieval.add_argument('--quick-mode', action='store_true', help='Enable all optimizations')
+    retrieval.add_argument('--no-default-excludes', action='store_true',
+                           help='Do not filter out default Microsoft hosts (dc*, adfs, exchange, etc.)')
 
     analysis = p.add_argument_group("Analysis & Output")
     analysis.add_argument('--check-dns', action='store_true', help='Enable DNS resolution checks')
@@ -257,9 +259,13 @@ def format_duration(seconds: float) -> str:
     return f"{int(hours)}h {int(minutes)}m"
 
 
-def should_exclude_host(hostname: str) -> bool:
+def should_exclude_host(hostname: str, domain: str | None = None) -> bool:
+    hostname_lower = hostname.lower()
+    domain_lower = domain.lower() if domain else None
     for pattern in EXCLUDE_PATTERNS:
-        if re.match(pattern, hostname, re.IGNORECASE):
+        if pattern == r'^dc\d*\.' and domain_lower and hostname_lower.endswith(domain_lower):
+            continue
+        if re.match(pattern, hostname_lower, re.IGNORECASE):
             return True
     return False
 
@@ -432,7 +438,9 @@ def build_optimized_filter(args) -> str:
 
 
 def enumerate_spns(conn: Connection, base_dn: str, page_size: int,
-                   search_filter: str, limit: int = None) -> List[Dict]:
+                   search_filter: str, limit: int = None,
+                   apply_default_excludes: bool = True,
+                   domain: str | None = None) -> List[Dict]:
     results = []
     attributes = ['servicePrincipalName', 'sAMAccountName', 'distinguishedName', 
                   'objectClass', 'userAccountControl', 'dNSHostName', 'lastLogonTimestamp', 'lastLogon']
@@ -496,7 +504,7 @@ def enumerate_spns(conn: Connection, base_dn: str, page_size: int,
                 if is_microsoft_guid_path(spn, host):
                     continue
                 
-                if should_exclude_host(host):
+                if apply_default_excludes and should_exclude_host(host, domain):
                     continue
                 
                 results.append({
@@ -716,7 +724,15 @@ def main():
     print(f"[+] Using LDAP filter: {search_filter}")
     
     print("[+] Enumerating SPNs...")
-    spn_entries = enumerate_spns(conn, base_dn, args.page_size, search_filter, args.limit)
+    spn_entries = enumerate_spns(
+        conn,
+        base_dn,
+        args.page_size,
+        search_filter,
+        args.limit,
+        apply_default_excludes=not args.no_default_excludes,
+        domain=args.domain
+    )
     print(f"[+] Found {len(spn_entries)} SPNs after filtering")
     
     duplicates = {}
