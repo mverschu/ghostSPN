@@ -1,3 +1,4 @@
 ldap3>=2.9
 tabulate>=0.9
 tqdm>=4.0
+dnspython>=2.0
