@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ghost-spn"
+version = "0.1.0"
+description = "Detects ghost SPNs orphaned service principal names pointing to non-existent hosts or accounts."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+  "ldap3>=2.9",
+  "tabulate>=0.9",
+  "tqdm>=4.0"
+]
+keywords = ["Active Directory", "security", "kerberos", "spn"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Topic :: Security"
+]
+
+[project.urls]
+Homepage = "https://github.com/mverschu/ghostSPN"
+
+[project.scripts]
+ghostspn = "ghostSPN:main"
