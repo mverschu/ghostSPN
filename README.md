@@ -16,7 +16,7 @@
   ```
   You can also install directly from Git once the repo is published:
   ```
-  pipx install git+https://github.com/your-org/ghostSPN.git
+  pipx install git+https://github.com/mverschu/ghostSPN.git
   ```
 
 - **pip / virtual environment**
