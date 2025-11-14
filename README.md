@@ -19,12 +19,12 @@
 ## Usage
 Provide valid Active Directory credentials and target information. The most common invocation is:
 ```
-python3 ghostSPN.py --server DC01 --domain corp.local --username corp\\admin --password Pass123
+python3 ghostSPN.py --server DC01 --domain corp.local --username bear --password Pass123
 ```
 
 For LDAPS environments enforcing channel binding, use a UPN-style username together with `--use-ssl`:
 ```
-python3 ghostSPN.py --server dc01.corp.local --use-ssl --username admin@corp.local --password Pass123 --no-verify
+python3 ghostSPN.py --server dc01.corp.local --use-ssl --username bear@corp.com --password Pass123 --no-verify
 ```
 
 Run `ghostspn --help` (or `python3 ghostSPN.py --help`) for the complete list of arguments.
